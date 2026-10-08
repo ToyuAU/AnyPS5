@@ -18,10 +18,15 @@
 #include <utility>
 #include <vector>
 
+namespace GuestAllocations {
+struct Range;
+}
+
 namespace AgcDriver::Graphics {
 
 class ResidentColor;
 class CommandBatch;
+class Buffer;
 class StorageTexture;
 struct HostImport;
 
@@ -304,6 +309,25 @@ private:
     // APS5_BLOCK_WRITEBACK_EACH=1 stores the touched units only).
     void writeBack(std::uint64_t address, std::size_t bytes);
     void writeBackLayers(const std::vector<bool>& layers);
+    struct EdgeSnapshot {
+        std::uint64_t begin;
+        std::uint64_t end;
+        std::shared_ptr<Buffer> bytes;
+        std::weak_ptr<const void> allocation;
+    };
+    struct EdgeMerge {
+        EdgeSnapshot baseline;
+        std::shared_ptr<Buffer> result;
+        std::uint64_t generation;
+    };
+    const EdgeSnapshot* edgeSnapshot(std::uint64_t begin, std::uint64_t end) const;
+    void prepareEdgeCapture(std::uint64_t begin, std::uint64_t end);
+    void captureEdges(VkCommandBuffer commands, const HostImport& import, VkBuffer source, std::span<const VkBufferCopy> copies, std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges);
+    void captureCpuEdges(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges);
+    void captureCpuEdges(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges, std::span<const std::byte> source, std::span<const std::shared_ptr<const GuestAllocations::Range>> allocations);
+    void invalidateEdges(std::uint64_t begin, std::uint64_t end);
+    void finishEdgeMerges(std::span<EdgeMerge> merges);
+    static std::vector<std::pair<std::uint64_t, std::uint64_t>> withoutEdgeMerges(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges, std::span<const EdgeMerge> merges);
     // Tracked units as 64 KiB write-stamp blocks (`blockUnits`: a thin tiled surface at a 64 KiB
     // aligned base; APS5_NO_BLOCK_TRACKING=1 tracks array layers as above instead): a fill of one
     // layer, a CPU write or another image's store then costs the blocks it touched, moved through
@@ -354,7 +378,7 @@ private:
     // The write-back retiles into the import's unit shadow where a slab takes the piece
     // (`shadowed` receives those guest ranges, `imported` the pieces written to the import).
     std::uint64_t uploadWindows(const HostImport& import, std::span<const std::pair<std::uint64_t, std::uint64_t>> runs, bool discard = false);
-    std::uint64_t writeBackWindows(const HostImport& import, std::span<const std::pair<std::uint64_t, std::uint64_t>> keep, std::uint64_t firstStored, std::uint64_t lastStored, std::vector<ShadowedRange>& shadowed, std::vector<std::pair<std::uint64_t, std::uint64_t>>& imported);
+    std::uint64_t writeBackWindows(const HostImport& import, std::span<const std::pair<std::uint64_t, std::uint64_t>> keep, std::uint64_t firstStored, std::uint64_t lastStored, std::vector<ShadowedRange>& shadowed, std::vector<std::pair<std::uint64_t, std::uint64_t>>& imported, std::span<EdgeMerge> merges);
     // Per-layer validity (thin array surfaces whose layers are 64 KiB-aligned guest slices; every
     // other surface is one tracked layer): a layer's generation is the write generation its guest
     // bytes were last known to match the image at, and a pending layer holds results (a clear, a
@@ -425,6 +449,7 @@ private:
     std::uint64_t sliceLinearBytes = 0;
     SurfaceGeometry geometry;
     std::vector<std::byte> original;
+    std::vector<EdgeSnapshot> edgeSnapshots;
     // DCC keys the image content was uploaded under: a fast-cleared surface starts as its clear value.
     DccKeys uploadedKeys = DccKeys::Uncompressed;
     mutable DccKeys filledKeys = DccKeys::Uncompressed;

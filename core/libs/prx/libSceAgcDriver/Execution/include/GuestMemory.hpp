@@ -45,6 +45,7 @@ Compare CompareMapped(std::uint64_t address, std::span<const std::byte> bytes);
 // re-read of a differing run).
 Compare CopyMapped(std::uint64_t address, std::span<std::byte> out);
 void WriteChangedCommitted(std::uint64_t address, std::span<const std::byte> current, std::span<const std::byte> original);
+bool MergeChangedCommitted(std::uint64_t address, std::span<const std::byte> current, std::span<const std::byte> original, std::uint64_t generation);
 void Write(std::uint64_t address, std::span<const std::byte> source, std::size_t alignment = 1);
 // Stores the parts of `current` that differ from `original` (the guest bytes the GPU started from), so
 // guest writes made meanwhile to untouched bytes survive. Compares in 256-byte blocks.
@@ -76,6 +77,7 @@ bool UnchangedSinceAll(std::span<const UnchangedQuery> queries);
 std::uint64_t MarkWritten(std::uint64_t address, std::size_t bytes);
 std::uint64_t StoreOwnBytes(std::uint64_t address, std::size_t bytes, const std::function<void()>& store);
 bool StoredOver(std::uint64_t address, std::size_t bytes, std::uint64_t generation);
+bool DriverStoredOver(std::uint64_t address, std::size_t bytes, std::uint64_t generation);
 // Collect epoch: within one epoch a range already collected is not walked again, CollectWrites
 // returns the current generation instead. A guest write landing between two collects of the same
 // epoch is seen by the next epoch, which is the ordering real hardware gives a CPU write made while a

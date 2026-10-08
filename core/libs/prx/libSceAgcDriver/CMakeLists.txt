@@ -463,6 +463,30 @@ target_link_libraries(agc_driver_recorder_tests PRIVATE
 set_target_properties(agc_driver_recorder_tests PROPERTIES CXX_EXTENSIONS OFF)
 configure_windows_unwind(agc_driver_recorder_tests)
 
+add_test_executable(agc_storage_edge_writeback_tests EXCLUDE_FROM_ALL tests/StorageEdgeWriteBack.cpp)
+target_include_directories(agc_storage_edge_writeback_tests PRIVATE
+        ${LIBS_INCLUDE_DIR}
+        ${CMAKE_SOURCE_DIR}/core/shader/recompiler
+        ${CMAKE_SOURCE_DIR}/3rdparty/Vulkan-Headers/include
+)
+target_link_libraries(agc_storage_edge_writeback_tests PRIVATE libSceAgcDriver SDL2-static libc)
+set_target_properties(agc_storage_edge_writeback_tests PROPERTIES CXX_EXTENSIONS OFF)
+configure_windows_unwind(agc_storage_edge_writeback_tests)
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    target_sources(agc_storage_edge_writeback_tests PRIVATE tests/StorageEdgeWriteWatch.cpp)
+    target_compile_definitions(agc_storage_edge_writeback_tests PRIVATE ANYPS5_TEST_WRITE_WATCH=1)
+    set_target_properties(agc_storage_edge_writeback_tests PROPERTIES ENABLE_EXPORTS ON)
+endif()
+if(BUILD_TESTING)
+    set_target_properties(agc_storage_edge_writeback_tests PROPERTIES EXCLUDE_FROM_ALL OFF)
+    add_test(NAME agc_storage_edge_writeback COMMAND agc_storage_edge_writeback_tests)
+    set_tests_properties(agc_storage_edge_writeback PROPERTIES SKIP_RETURN_CODE 77)
+    if(WIN32)
+        set_tests_properties(agc_storage_edge_writeback PROPERTIES ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+endif()
+
 add_test_executable(agc_recorder_kept_bytes_tests EXCLUDE_FROM_ALL tests/RecorderKeptBytes.cpp)
 target_include_directories(agc_recorder_kept_bytes_tests PRIVATE ${LIBS_INCLUDE_DIR} ${CMAKE_SOURCE_DIR}/core/shader/recompiler ${CMAKE_SOURCE_DIR}/3rdparty/Vulkan-Headers/include)
 target_link_libraries(agc_recorder_kept_bytes_tests PRIVATE libSceAgcDriver libc)

@@ -768,6 +768,7 @@ struct WriteTracker {
     std::vector<std::uint32_t> cpuBlocks;
     std::vector<std::uint32_t> writtenBlocks;
     WriteWatchCoverage coverage;
+    std::vector<std::uint32_t> driverBlocks;
 #else
     static constexpr std::size_t LeafBlocks = std::size_t{1} << 16;
     static constexpr std::size_t LeafCount = std::size_t{1} << 15;
@@ -775,6 +776,7 @@ struct WriteTracker {
         std::array<std::uint32_t, LeafBlocks> blocks{};
         std::array<std::uint32_t, LeafBlocks> cpuBlocks{};
         std::array<std::uint32_t, LeafBlocks> writtenBlocks{};
+        std::array<std::uint32_t, LeafBlocks> driverBlocks{};
     };
     std::vector<std::unique_ptr<Leaf>> leaves;
 #endif
@@ -812,6 +814,7 @@ struct WriteTracker {
         cpuBlocks.assign(size / WriteBlockBytes + 1, 0);
         writtenBlocks.assign(size / WriteBlockBytes + 1, 0);
         coverage.Initialize(base, size);
+        driverBlocks.assign(size / WriteBlockBytes + 1, 0);
         pages.resize(1u << 16);
         GuestArena::GuestArenaSetPrivateMappingObserver_nid_postfix(&watchPrivateMapping);
 #else
@@ -919,6 +922,15 @@ struct WriteTracker {
 #endif
     }
 
+    std::uint32_t driverStampOf(std::uint64_t block) const {
+#ifdef _WIN32
+        return driverBlocks[block];
+#else
+        const auto& leaf = leaves[block / LeafBlocks];
+        return leaf != nullptr ? leaf->driverBlocks[block % LeafBlocks] : 0;
+#endif
+    }
+
     void stamp(std::uint64_t block, std::uint32_t stampGeneration, StampKind kind) {
         const bool cpu = kind != StampKind::Driver;
         const bool written = kind != StampKind::ImportWindow;
@@ -926,13 +938,36 @@ struct WriteTracker {
         blocks[block] = stampGeneration;
         if (cpu) cpuBlocks[block] = stampGeneration;
         if (written) writtenBlocks[block] = stampGeneration;
+        if (kind == StampKind::Driver) driverBlocks[block] = stampGeneration;
 #else
         auto& leaf = leaves[block / LeafBlocks];
         if (leaf == nullptr) leaf = std::make_unique<Leaf>();
         leaf->blocks[block % LeafBlocks] = stampGeneration;
         if (cpu) leaf->cpuBlocks[block % LeafBlocks] = stampGeneration;
         if (written) leaf->writtenBlocks[block % LeafBlocks] = stampGeneration;
+        if (kind == StampKind::Driver) leaf->driverBlocks[block % LeafBlocks] = stampGeneration;
 #endif
+    }
+    bool driverStoredOver(std::uint64_t address, std::size_t bytes, std::uint64_t generation) const {
+        if (bytes == 0) return false;
+        if (!watched || generation == 0 || bytes > std::numeric_limits<std::uint64_t>::max() - address || !covers(address, bytes)) return true;
+        const auto end = address + bytes;
+        const auto first = blockOf(address);
+        const auto last = blockOf(end - 1);
+        for (auto block = first; block <= last; ++block) {
+            if (driverStampOf(block) <= generation) continue;
+            const auto found = driverPieces.find(block);
+            if (found == driverPieces.end()) return true;
+            const auto& entry = found->second;
+            if (entry.whole > generation || entry.dropped > generation) return true;
+            const auto begin = blockBegin(block);
+            const auto from = std::max(address, begin) - begin;
+            const auto to = std::min<std::uint64_t>(end, begin + WriteBlockBytes) - begin;
+            for (const auto& piece : entry.pieces) {
+                if (piece.generation > generation && piece.begin < to && from < piece.end) return true;
+            }
+        }
+        return false;
     }
 };
 
@@ -1303,6 +1338,13 @@ bool StoredOver(std::uint64_t address, std::size_t bytes, std::uint64_t generati
         }
     }
     return false;
+}
+
+bool DriverStoredOver(std::uint64_t address, std::size_t bytes, std::uint64_t generation) {
+    auto& tracker = Tracker();
+    const auto lock = lockTracker(tracker);
+    tracker.initialize();
+    return tracker.driverStoredOver(address, bytes, generation);
 }
 
 std::uint64_t TrackerGeneration() {
@@ -1795,6 +1837,34 @@ void WriteChangedCommitted(std::uint64_t address, std::span<const std::byte> cur
         const auto length = static_cast<std::size_t>(end - begin);
         WriteChanged(begin, current.subspan(offset, length), original.subspan(offset, length));
     }
+}
+
+bool MergeChangedCommitted(std::uint64_t address, std::span<const std::byte> current, std::span<const std::byte> original, std::uint64_t generation) {
+    require(current.size() == original.size(), "write-back snapshot sizes differ");
+    if (current.empty()) return true;
+    const ReadSiteScope site(ReadSite::Store);
+    FlushGpuWrites(address, current.size());
+    auto* destination = reinterpret_cast<std::byte*>(address);
+    if (!Accessible(destination, current.size(), true)) return false;
+    const TimedAccess timed(CounterChangedWrite, current.size());
+    bool merged = false;
+    storeOwn(address, current.size(), [&] {
+        if (Tracker().driverStoredOver(address, current.size(), generation)) return std::pair<std::uint64_t, std::uint64_t>{0, 0};
+        CheckRange(destination, current.size(), 1, true);
+        merged = true;
+        std::size_t firstChanged = current.size();
+        std::size_t lastChanged = 0;
+        for (std::size_t byte = 0; byte < current.size(); ++byte) {
+            if (current[byte] == original[byte]) continue;
+            auto expected = original[byte];
+            if (std::atomic_ref(destination[byte]).compare_exchange_strong(expected, current[byte], std::memory_order_relaxed)) {
+                firstChanged = std::min(firstChanged, byte);
+                lastChanged = byte + 1;
+            }
+        }
+        return firstChanged < lastChanged ? std::pair<std::uint64_t, std::uint64_t>{address + firstChanged, address + lastChanged} : std::pair<std::uint64_t, std::uint64_t>{0, 0};
+    });
+    return merged;
 }
 
 void WriteChanged(std::uint64_t address, std::span<const std::byte> current, std::span<const std::byte> original) {
