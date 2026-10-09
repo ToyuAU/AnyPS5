@@ -186,12 +186,21 @@ void CheckImportSettle() {
     std::memset(memory, 0x11, 3 * Block);
     CollectWritesUncached(base, 3 * Block);
     Require(ImportWatched(base, Block, [] { return true; }, true) && ImportWatched(base + Block, Block, [] { return true; }, true), "the import callbacks failed");
+    StoreOwnBytes(base + 8, 1, [&] { bytes[8] = 0x44; });
     std::array<std::uint64_t, 1> generations{TrackerGeneration()};
     std::array<std::uint8_t, 1> changed{};
     const auto state = [&](std::uint64_t address) {
         Require(ChangedBlocks(address, Block, generations, changed), "a settling import is not tracked");
         return changed[0];
     };
+
+    bytes[8] = bytes[8];
+    CollectWritesUncached(base, Block);
+    Require(state(base) == BlockMaybeWritten, "a late mark over the driver's own store read as a CPU store");
+    bytes[9] = 0x55;
+    CollectWritesUncached(base, Block);
+    Require(state(base) == BlockWritten, "a CPU edit after the driver's own store was hidden");
+    generations[0] = TrackerGeneration();
 
     bytes[8] = bytes[8];
     bytes[Block + 8] = 0x22;

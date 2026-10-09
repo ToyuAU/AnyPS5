@@ -1051,12 +1051,16 @@ constexpr std::uint64_t MaxSettleSnapshotBytes = std::uint64_t{256} << 20;
 constexpr std::uint64_t MaxSettlingBytes = std::uint64_t{512} << 20;
 
 StampKind settlingKind(WriteTracker& tracker, std::uintptr_t page, StampKind kind) {
-    if (kind != StampKind::Cpu) return kind;
+    if (kind == StampKind::ImportWindow) return kind;
     for (auto& entry : tracker.settling) {
         if (page < entry.first || page >= entry.stop) continue;
         auto* saved = entry.bytes.data() + (page - entry.first);
         const auto* current = reinterpret_cast<const std::byte*>(page);
         if (!Accessible(current, WritePageBytes)) return kind;
+        if (kind == StampKind::Driver) {
+            std::memcpy(saved, current, WritePageBytes);
+            continue;
+        }
         if (std::memcmp(saved, current, WritePageBytes) == 0) return StampKind::ImportWindow;
         std::memcpy(saved, current, WritePageBytes);
         return kind;
