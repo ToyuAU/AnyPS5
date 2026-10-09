@@ -87,9 +87,18 @@ runtime/
       <converted bundled modules>
 ```
 
-Use a compatible x86-64 Linux/Windows host and Vulkan device. Run `chmod +x
-runtime/app.elf` then `./runtime/app.elf` on Linux, or `.\runtime\app.exe` in
-PowerShell. Conversion on an Apple Silicon Mac still produces x86-64 output.
+Use a compatible x86-64 Linux/Windows host and Vulkan device. On Linux, launch
+from the runtime directory with the system libraries on the loader path so they
+can resolve dependencies on one another:
+
+```sh
+cd runtime
+chmod +x app.elf
+LD_LIBRARY_PATH="$PWD/libs${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" ./app.elf
+```
+
+On Windows, run `.\runtime\app.exe` in PowerShell. Conversion on an Apple Silicon
+Mac still produces x86-64 output.
 
 Read [Usage](USAGE.md) for library search paths, fonts, GPU selection and Windows
 memory requirements. Check [Compatibility](COMPATIBILITY.md) before expecting a
