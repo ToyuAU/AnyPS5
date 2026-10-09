@@ -557,6 +557,67 @@ void pendingCopyEdgeTests(const Context& context, Recorder& recorder) {
     }
 }
 
+
+void mergePrecedenceTests(const Context& context, Recorder& recorder) {
+    Surface surface(context, recorder, 8192);
+    constexpr std::size_t count = 65536;
+    std::vector<std::byte> baseline(count), current(count), expected(count);
+    auto* destination = reinterpret_cast<std::byte*>(surface.Address());
+    for (unsigned value = 0; value < 256; ++value) {
+        std::fill(baseline.begin(), baseline.end(), std::byte{static_cast<unsigned char>(value)});
+        for (std::size_t byte = 0; byte < count; ++byte) {
+            const auto cpu = static_cast<unsigned char>(byte / 256);
+            const auto gpu = static_cast<unsigned char>(byte % 256);
+            destination[byte] = std::byte{cpu};
+            current[byte] = std::byte{gpu};
+            expected[byte] = std::byte{cpu == value && gpu != value ? gpu : cpu};
+        }
+        noteWrite(surface.Address(), count);
+        const auto generation = Memory::CollectWritesUncached(surface.Address(), count);
+        Require(Memory::MergeChangedCommitted(surface.Address(), current, baseline, generation), "a CPU-only byte merge was refused");
+        Require(std::equal(expected.begin(), expected.end(), destination), "a CPU/GPU byte merge violated baseline precedence");
+    }
+}
+
+void mergeDriverPrecedenceTests(const Context& context, Recorder& recorder) {
+    for (const auto value : {Initial, std::byte{0x77}}) {
+        Surface surface(context, recorder, 8192, 64, 64);
+        const auto generation = surface.Generation();
+        surface.DriverStore(0, value);
+        surface.WriteBack();
+        surface.CpuStore(7, std::byte{0x31});
+        std::array<std::byte, 8> baseline, current;
+        baseline.fill(Initial);
+        current.fill(std::byte{128});
+        Require(!Memory::MergeChangedCommitted(surface.Address(), current, baseline, generation), "a newer driver store permitted a stale byte merge");
+        surface.CheckMemory(Initial, {{0, value}, {1, value}, {2, value}, {3, value}, {7, std::byte{0x31}}}, "a refused merge changed driver or CPU bytes");
+    }
+}
+
+void edgePrecedenceTests(const Context& context, Recorder& recorder) {
+    for (const bool cpuFirst : {true, false}) {
+        Surface surface(context, recorder, 8192, 64, 64);
+        if (cpuFirst) surface.CpuStore(17, std::byte{0x31});
+        surface.Draw(128);
+        if (!cpuFirst) surface.CpuStore(17, std::byte{0x31});
+        surface.CpuStore(19, std::byte{0x33});
+        surface.CpuStore(19, Initial);
+        surface.WriteBack();
+        surface.CheckMemory(std::byte{128}, {{17, std::byte{0x31}}}, "mixed CPU/GPU edge result differs");
+        surface.CpuStore(18, std::byte{0x32});
+        surface.Refresh();
+        surface.CheckImage(std::byte{128}, {{std::byte{0x31}, 1}, {std::byte{0x32}, 1}}, "a CPU edit after the edge merge was lost");
+    }
+    Surface surface(context, recorder, 8192, 64, 64);
+    surface.Draw(205);
+    surface.CpuStore(17, std::byte{0x31});
+    surface.CpuStore(18, Initial);
+    surface.WriteBack();
+    surface.CheckMemory(Initial, {{17, std::byte{0x31}}}, "an unchanged GPU result overwrote a CPU edit");
+    surface.Refresh();
+    surface.CheckImage(Initial, {{std::byte{0x31}, 1}}, "an unchanged GPU result lost a CPU edit at refresh");
+}
+
 }
 
 int main() {
@@ -587,6 +648,9 @@ int main() {
         writeBackBaselineTests(context, recorder);
         driverStoreTests(context, recorder);
         driverProvenanceTests(context, recorder);
+        mergePrecedenceTests(context, recorder);
+        mergeDriverPrecedenceTests(context, recorder);
+        edgePrecedenceTests(context, recorder);
         reregisteredEdgeTests(context, recorder);
         aliasEdgeTests(context, recorder);
         aliasBorrowWriteTests(context, recorder);
