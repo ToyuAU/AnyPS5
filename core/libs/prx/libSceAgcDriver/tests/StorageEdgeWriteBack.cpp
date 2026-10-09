@@ -352,9 +352,126 @@ void fullBlockTests(const Context& context, Recorder& recorder) {
     surface.Draw(128);
     surface.CpuStore(32, Initial);
     surface.WriteBack();
-    std::map<std::size_t, std::byte> kept;
-    for (std::size_t at = 0; at < UnitBytes; ++at) kept.emplace(at, Initial);
-    surface.CheckMemory(std::byte{128}, kept, "an aligned CPU-stamped block changed ownership");
+    surface.CheckMemory(std::byte{128}, {}, "a same-value CPU store discarded a full block of GPU results");
+}
+
+void fullBlockMergeTests(const Context& context, Recorder& recorder) {
+    for (const bool cpu : {false, true}) {
+        for (const bool refresh : {false, true}) {
+            for (const bool collected : {false, true}) {
+                Surface surface(context, recorder, 0, 512, 512, false, cpu);
+                surface.Draw(128);
+                const auto edited = UnitBytes + 17;
+                if (collected) {
+                    surface.CpuStore(32, Initial);
+                    surface.CpuStore(edited, std::byte{0x31});
+                } else {
+                    surface.CpuStoreUncollected(32, Initial);
+                    surface.CpuStoreUncollected(edited, std::byte{0x31});
+                }
+                if (refresh) {
+                    surface.Refresh();
+                    surface.CheckImage(std::byte{128}, {{std::byte{0x31}, 1}}, "full-block refresh lost a CPU edit or GPU results");
+                } else {
+                    surface.WriteBack();
+                }
+                surface.CheckMemory(std::byte{128}, {{edited, std::byte{0x31}}}, "full-block write-back lost mixed CPU/GPU bytes");
+                surface.Refresh();
+                surface.Draw(64);
+                surface.CpuStore(32, std::byte{128});
+                surface.CpuStore(edited, std::byte{0x31});
+                surface.WriteBack();
+                surface.CheckMemory(std::byte{64}, {}, "a second full-block merge reused an old baseline");
+            }
+        }
+    }
+}
+
+void fullBlockGuardTests(const Context& context, Recorder& recorder) {
+    for (const bool cpu : {false, true}) {
+        Surface surface(context, recorder, 0, 256, 256);
+        Require(surface.Size() == UnitBytes, "full-block ownership fixture is not one block");
+        surface.Draw(128);
+        if (cpu) surface.CpuStore(17, std::byte{0x31});
+        surface.DriverStore(64, Initial);
+        surface.WriteBack();
+        const std::map<std::size_t, std::byte> edits = cpu ? std::map<std::size_t, std::byte>{{17, std::byte{0x31}}} : std::map<std::size_t, std::byte>{};
+        surface.CheckMemory(Initial, edits, "a newer same-value driver store lost full-block ownership");
+    }
+    Surface surface(context, recorder, 0, 256, 256);
+    surface.Draw(128);
+    surface.Reregister();
+    surface.CpuStore(32, Initial);
+    surface.WriteBack();
+    surface.CheckMemory(Initial, {}, "a full-block baseline overwrote a replacement allocation");
+    Surface unchanged(context, recorder, 0, 256, 256);
+    unchanged.Draw(205);
+    unchanged.CpuStore(17, std::byte{0x31});
+    unchanged.WriteBack();
+    unchanged.CheckMemory(Initial, {{17, std::byte{0x31}}}, "unchanged full-block GPU bytes overwrote a CPU edit");
+}
+
+void fullBlockSourceTests(const Context& context, Recorder& recorder) {
+    {
+        Surface surface(context, recorder, 0, 512, 512, true);
+        surface.Draw(128);
+        surface.CpuStore(UnitBytes + 32, std::byte{0x77});
+        surface.WriteBack();
+        surface.CheckMemory(std::byte{128}, {}, "a full-block baseline preceded an ordered upload-source write");
+    }
+    {
+        Surface surface(context, recorder, 0, 512, 512, false, false, true);
+        surface.Draw(128, true);
+        surface.CpuStoreUncollected(UnitBytes + 17, std::byte{0x31});
+        surface.WriteBack();
+        surface.CheckMemory(std::byte{128}, {{UnitBytes + 17, std::byte{0x31}}}, "a pending upload lost a full-block CPU edit");
+    }
+    {
+        Surface surface(context, recorder, 0);
+        surface.Fill(128, true);
+        surface.CpuStoreUncollected(UnitBytes + 17, std::byte{0x31});
+        surface.WriteBack();
+        surface.CheckMemory(std::byte{128}, {{UnitBytes + 17, std::byte{0x31}}}, "a pending clear lost a full-block CPU edit");
+    }
+    {
+        Surface source(context, recorder, 0);
+        Surface destination(context, recorder, 0);
+        source.Draw(128);
+        destination.CopyFrom(source, true);
+        destination.CpuStoreUncollected(UnitBytes + 17, std::byte{0x31});
+        destination.WriteBack();
+        destination.CheckMemory(std::byte{128}, {{UnitBytes + 17, std::byte{0x31}}}, "a pending copy lost a full-block CPU edit");
+    }
+    {
+        Surface surface(context, recorder, 0);
+        surface.CreateAlias();
+        surface.Draw(128);
+        surface.CpuStore(UnitBytes + 17, std::byte{0x31});
+        surface.RefreshAlias();
+        surface.CheckImage(std::byte{128}, {{std::byte{0x31}, 1}}, "an alias discarded mixed full-block results", true);
+        surface.CheckMemory(std::byte{128}, {{UnitBytes + 17, std::byte{0x31}}}, "an alias uploaded stale full-block bytes");
+    }
+    {
+        Surface surface(context, recorder, 0);
+        surface.CreateAlias();
+        surface.Draw(128);
+        surface.RefreshAlias();
+        surface.Draw(64, false, true);
+        surface.CpuStore(UnitBytes + 32, Initial, true);
+        surface.WriteBack(true);
+        surface.CheckMemory(std::byte{64}, {}, "an alias borrow lost a full-block physical baseline");
+    }
+}
+
+void largeFullBlockTests(const Context& context, Recorder& recorder) {
+    Surface surface(context, recorder, 0, 2048, 4096);
+    Require(surface.Size() == 8 * 1024 * 1024, "large full-block fixture is not 8 MiB");
+    surface.Draw(128);
+    for (std::size_t at = 0; at < surface.Size(); at += UnitBytes) surface.CpuStore(at + 32, Initial);
+    const auto edited = surface.Size() / 2 + 17;
+    surface.CpuStore(edited, std::byte{0x31});
+    surface.WriteBack();
+    surface.CheckMemory(std::byte{128}, {{edited, std::byte{0x31}}}, "a large image lost GPU results in CPU-stamped full blocks");
 }
 
 void uploadOrderTests(const Context& context, Recorder& recorder) {
@@ -620,8 +737,9 @@ void edgePrecedenceTests(const Context& context, Recorder& recorder) {
 
 }
 
-int main() {
+int main(int argc, char** argv) {
     try {
+        Require(argc == 1 || (argc == 2 && std::string(argv[1]) == "--full-blocks"), "unknown storage write-back test selection");
         std::unique_ptr<AgcDriver::Tests::RecorderDevice> device;
         try {
             device = std::make_unique<AgcDriver::Tests::RecorderDevice>();
@@ -640,6 +758,15 @@ int main() {
         context.detiler = &detiler;
         Recorder recorder(context);
         recorder.Activate();
+        if (argc == 2) {
+            fullBlockMergeTests(context, recorder);
+            fullBlockGuardTests(context, recorder);
+            fullBlockSourceTests(context, recorder);
+            largeFullBlockTests(context, recorder);
+            recorder.Sync();
+            std::cout << "Storage full-block write-back tests passed\n";
+            return 0;
+        }
         noOpEdgeTests(context, recorder);
         mixedEdgeTests(context, recorder);
         shortSurfaceTests(context, recorder);

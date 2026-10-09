@@ -314,11 +314,13 @@ private:
         std::uint64_t end;
         std::shared_ptr<Buffer> bytes;
         std::weak_ptr<const void> allocation;
+        std::size_t offset = 0;
     };
     struct EdgeMerge {
         EdgeSnapshot baseline;
         std::shared_ptr<Buffer> result;
         std::uint64_t generation;
+        std::size_t offset = 0;
     };
     const EdgeSnapshot* edgeSnapshot(std::uint64_t begin, std::uint64_t end) const;
     void prepareEdgeCapture(std::uint64_t begin, std::uint64_t end);

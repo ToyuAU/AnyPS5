@@ -480,9 +480,10 @@ endif()
 if(BUILD_TESTING)
     set_target_properties(agc_storage_edge_writeback_tests PROPERTIES EXCLUDE_FROM_ALL OFF)
     add_test(NAME agc_storage_edge_writeback COMMAND agc_storage_edge_writeback_tests)
-    set_tests_properties(agc_storage_edge_writeback PROPERTIES SKIP_RETURN_CODE 77)
+    add_test(NAME agc_storage_full_block_writeback COMMAND agc_storage_edge_writeback_tests --full-blocks)
+    set_tests_properties(agc_storage_edge_writeback agc_storage_full_block_writeback PROPERTIES SKIP_RETURN_CODE 77)
     if(WIN32)
-        set_tests_properties(agc_storage_edge_writeback PROPERTIES ENVIRONMENT_MODIFICATION
+        set_tests_properties(agc_storage_edge_writeback agc_storage_full_block_writeback PROPERTIES ENVIRONMENT_MODIFICATION
                 "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
 endif()
