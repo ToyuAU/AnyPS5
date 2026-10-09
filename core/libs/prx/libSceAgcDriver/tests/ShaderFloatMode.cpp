@@ -66,15 +66,15 @@ int main() {
             const auto baseHash = RecompileCacheKey::ContextHash(request);
             for (const auto bit : {12u, 13u, 14u, 15u, 16u, 17u, 18u, 19u, 21u, 23u, 26u}) {
                 request.context.floatMode = ShaderFloatMode::Decode(1u << bit, ShaderFloatModeRegister::Compute);
-                std::vector<std::uint64_t> key, interface;
+                std::vector<std::uint64_t> key, preparedKey;
                 RecompileCacheKey::Build(request, key);
-                RecompileCacheKey::BuildInterface(request, interface);
-                require(key != baseKey && interface != baseInterface && RecompileCacheKey::ContextHash(request) != baseHash, "a float control bit was ignored by a cache identity");
+                RecompileCacheKey::BuildInterface(request, preparedKey);
+                require(key != baseKey && preparedKey != baseInterface && RecompileCacheKey::ContextHash(request) != baseHash, "a float control bit was ignored by a cache identity");
                 const auto replay = serializer.Deserialize(serializer.Serialize(request));
                 std::vector<std::uint64_t> replayKey, replayInterface;
                 RecompileCacheKey::Build(replay.request, replayKey);
                 RecompileCacheKey::BuildInterface(replay.request, replayInterface);
-                require(replay.request.context.floatMode == request.context.floatMode && replayKey == key && replayInterface == interface && RecompileCacheKey::ContextHash(replay.request) == RecompileCacheKey::ContextHash(request), "a capture changed the mode or prepared identity");
+                require(replay.request.context.floatMode == request.context.floatMode && replayKey == key && replayInterface == preparedKey && RecompileCacheKey::ContextHash(replay.request) == RecompileCacheKey::ContextHash(request), "a capture changed the mode or prepared identity");
             }
         }
         request.shader.stage = ShaderStage::Compute;
