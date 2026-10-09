@@ -238,18 +238,18 @@ ShaderRecompiler::PreparedShaderInvocation InvocationFor(const ShaderSnapshot& s
 std::optional<ShaderRecompiler::ShaderFloatMode> RegisteredFloatMode(const ShaderSnapshot& snapshot) {
     if (snapshot.registeredState == nullptr) return std::nullopt;
     std::uint32_t rsrc1;
-    std::uint32_t fp16OverflowBit;
+    ShaderRecompiler::ShaderFloatModeRegister modeRegister;
     switch (snapshot.type) {
-    case 0: rsrc1 = 0x212; fp16OverflowBit = 26; break;
-    case 1: rsrc1 = 0x00a; fp16OverflowBit = 29; break;
-    case 2: case 4: case 6: rsrc1 = 0x08a; fp16OverflowBit = 31; break;
-    case 5: case 7: rsrc1 = 0x10a; fp16OverflowBit = 30; break;
+    case 0: rsrc1 = 0x212; modeRegister = ShaderRecompiler::ShaderFloatModeRegister::Compute; break;
+    case 1: rsrc1 = 0x00a; modeRegister = ShaderRecompiler::ShaderFloatModeRegister::Pixel; break;
+    case 2: case 4: case 6: rsrc1 = 0x08a; modeRegister = ShaderRecompiler::ShaderFloatModeRegister::Geometry; break;
+    case 5: case 7: rsrc1 = 0x10a; modeRegister = ShaderRecompiler::ShaderFloatModeRegister::Hull; break;
     default: return std::nullopt;
     }
     const auto found = snapshot.registeredState->shader.find(rsrc1);
     if (found == snapshot.registeredState->shader.end()) return std::nullopt;
     const auto value = found->second;
-    return ShaderRecompiler::ShaderFloatMode{(value >> 12u) & 0xffu, ((value >> 21u) & 1u) != 0u, ((value >> 23u) & 1u) != 0u, ((value >> fp16OverflowBit) & 1u) != 0u};
+    return ShaderRecompiler::ShaderFloatMode::Decode(value, modeRegister);
 }
 
 namespace {

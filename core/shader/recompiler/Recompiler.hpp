@@ -2,6 +2,7 @@
 #define CORE_SHADER_RECOMPILIER_INCLUDE_SHADER_RECOMPILIER_RECOMPILER_HPP
 
 #include "RuntimeAbi.hpp"
+#include "ShaderFloatMode.hpp"
 #include "PipelineSpecialization.hpp"
 #include <array>
 #include <cstddef>
@@ -153,15 +154,6 @@ struct ShaderVertexStageInfo {
     std::uint32_t fetchAttribReg;
     std::uint32_t fetchBufferReg;
     bool fetchEmbedded;
-};
-
-struct ShaderFloatMode {
-    std::uint32_t floatMode = 0;
-    bool dx10Clamp = false;
-    bool ieeeMode = false;
-    bool fp16Overflow = false;
-
-    bool operator==(const ShaderFloatMode&) const = default;
 };
 
 inline constexpr std::uint32_t InterpolationQuiet = 1u;
